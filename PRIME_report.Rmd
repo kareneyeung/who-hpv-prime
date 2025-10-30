@@ -1,0 +1,433 @@
+---
+title: ""
+output: 
+  pdf_document:
+    latex_engine: xelatex
+mainfont: Arial
+sansfont: Arial
+geometry: top=1.5cm, bottom=1.5cm, left=1.5cm, right=1.5cm
+params:
+  country: "DefaultCountry"
+  comparison: "DefaultComparison"
+  logo: "www/WHO-EN-C-H.png"
+  vaccines_one: NA
+  vaccines_two: NA
+  females_one: NA
+  females_two: NA
+  df_cases: !r data.frame()
+  df_deaths: !r data.frame()
+  df_dalys: !r data.frame()
+  df_vacc_cost: !r data.frame()
+  df_costs_saved: !r data.frame()
+  df_net_cost: !r data.frame()
+  df_cost_case: !r data.frame()
+  df_cost_death: !r data.frame()
+  df_cost_dalys: !r data.frame()
+  gdp_cap: 0
+  ce_thresholds: !r c()
+  ce_user_thr: NA
+  params_table: !r data.frame()
+  eff_indicator: "Cervical cancer cases prevented"
+header-includes:
+  - \usepackage{xcolor}
+  - \definecolor{ceruleanBlue}{HTML}{2FA4E7}
+  - \definecolor{darkTeal}{HTML}{006285}
+  - \pagenumbering{gobble}
+  - \usepackage{graphicx}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(kableExtra)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(knitr)
+library(ggnewscale)
+library(kableExtra)
+
+my_fill_scale <- scale_fill_manual(values = c(
+  "No vaccination" = "#999999",
+  "One-dose"       = "#74C0E3",
+  "Two-dose"       = "#0094D3"
+))
+
+```
+
+```{r, include=FALSE}
+logo_path <- normalizePath("www/WHO-EN-C-H.png", winslash = "/")
+```
+
+\begin{minipage}[t]{0.7\textwidth}
+\raggedright
+\textcolor{ceruleanBlue}{\fontsize{12pt}{12pt}\selectfont \textbf{HPV vaccination impact results by PRIME}} \\[0.3em]
+\textcolor{darkTeal}{\fontsize{10pt}{10pt}\selectfont \textbf{`r params$country`}} \\[0.3em]
+\textcolor{darkTeal}{\fontsize{10pt}{10pt}\selectfont `r params$comparison`}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.25\textwidth}
+\raggedleft
+\raisebox{-0.6\height}{\includegraphics[height=1.2cm]{`r params$logo`}}
+\end{minipage}
+
+\rule{\textwidth}{0.4pt}
+
+\textit{Report generated on: `r format(Sys.Date(), "%d %B %Y")`}
+
+```{r comparison_table, echo=FALSE}
+
+# Build base table (prevent dot conversion with check.names = FALSE)
+table_data <- data.frame(
+  "Vaccination strategy" = c("No vaccination", "One-dose vaccination", "Two-dose vaccination"),
+  "Number of vaccines delivered" = c(
+    "-", 
+    format(params$vaccines_one, big.mark=","), 
+    format(params$vaccines_two, big.mark=",")
+  ),
+  "Number of females vaccinated" = c(
+    "-", 
+    format(params$females_one, big.mark=","), 
+    format(params$females_two, big.mark=",")
+  ),
+  stringsAsFactors = FALSE,
+  check.names = FALSE   # <---- prevents dots in headers
+)
+
+# Filter depending on user selection
+table_data <- switch(
+  params$comparison,
+  "No vaccination vs. One-dose"              = table_data[1:2, ],
+  "No vaccination vs. Two-dose"              = table_data[c(1,3), ],
+  "No vaccination vs. One-dose vs. Two-dose" = table_data,
+  "One-dose vs. Two-dose"                    = table_data[2:3, ],
+  table_data
+)
+
+# Print clean table
+kable(table_data, align = "lcc", row.names = FALSE)
+```
+
+
+```{r include=FALSE}
+filter_by_comparison <- function(df, comparison) {
+  if (comparison == "No vaccination vs. One-dose") {
+    df <- df[df$Scenario %in% c("No vaccination", "One-dose"), ]
+    
+  } else if (comparison == "No vaccination vs. Two-dose") {
+    df <- df[df$Scenario %in% c("No vaccination", "Two-dose"), ]
+    
+  } else if (comparison == "One-dose vs. Two-dose") {
+    df <- df[df$Scenario %in% c("One-dose", "Two-dose"), ]
+    
+  } else if (comparison == "No vaccination vs. One-dose vs. Two-dose") {
+    df <- df
+  }
+  
+  df
+}
+
+```
+
+
+
+### \textcolor{darkTeal}{Health impact of HPV vaccination compared to no vaccination (`r format(Sys.Date(), "%Y")`)}
+
+```{r health_impact, fig.width=12, fig.height=3.1}
+
+# Access data frames passed from Shiny
+df_cases  <- filter_by_comparison(params$df_cases,  params$comparison)
+df_deaths <- filter_by_comparison(params$df_deaths, params$comparison)
+df_dalys  <- filter_by_comparison(params$df_dalys,  params$comparison)
+
+# Find maximum value across all 3 dataframes
+shared_max <- max(
+  c(df_cases$Value, df_deaths$Value, df_dalys$Value),
+  na.rm = TRUE
+)
+
+# Add a little headroom (e.g. +30%)
+shared_limit <- shared_max * 1.3
+
+
+# A helper function for consistent plotting
+make_barplot <- function(df, title, y_limit) {
+  ggplot(df, aes(x = Scenario, y = Value, fill = Scenario)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = scales::comma(round(Value, 0))),
+              vjust = -0.5, size = 4) +
+    scale_y_continuous(
+      labels = scales::comma,
+      expand = expansion(mult = c(0, 0.08)),
+      limits = c(0, y_limit)
+    ) +
+    my_fill_scale +
+    labs(title = title, 
+         x = "Vaccination strategy", y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title    = element_text(size = 14, face = "bold", hjust = 0, margin = margin(b = 6)),
+      axis.title.x  = element_text(size = 11, color = "grey30", margin = margin(t = 10)),
+      axis.text.x   = element_text(size = 10),
+      axis.text.y   = element_text(size = 9),
+      legend.position = "none"
+    )
+}
+
+# Build the 3 plots
+p1 <- make_barplot(df_cases,  "Cervical cancer cases prevented", shared_limit)
+p2 <- make_barplot(df_deaths, "Cervical cancer deaths prevented", shared_limit)
+p3 <- make_barplot(df_dalys,  "DALYs prevented", shared_limit)
+
+# Arrange side by side
+grid.arrange(p1, p2, p3, ncol = 3)
+
+```
+
+### \textcolor{darkTeal}{Economic impact of HPV vaccination compared to no vaccination (Million `r format(Sys.Date(), "%Y")` USD)}
+
+```{r econ_impact, fig.width=12, fig.height=3.1}
+# Access economic data frames
+df_vacc_cost   <- filter_by_comparison(params$df_vacc_cost,   params$comparison)
+df_costs_saved <- filter_by_comparison(params$df_costs_saved, params$comparison)
+df_net_cost    <- filter_by_comparison(params$df_net_cost,    params$comparison)
+
+# Convert values to millions
+df_vacc_cost$Value   <- df_vacc_cost$Value   / 1e6
+df_costs_saved$Value <- df_costs_saved$Value / 1e6
+df_net_cost$Value    <- df_net_cost$Value    / 1e6
+
+# Determine min and max across all three dfs
+all_vals <- c(df_vacc_cost$Value, df_costs_saved$Value, df_net_cost$Value)
+min_val  <- min(all_vals, na.rm = TRUE)
+max_val  <- max(all_vals, na.rm = TRUE)
+
+# Shared limit logic
+if (min_val >= 0) {
+  econ_shared_limit <- c(0, max_val * 1.3)
+} else if (max_val <= 0) {
+  econ_shared_limit <- c(min_val * 1.3, 0)
+} else {
+  max_abs <- max(abs(c(min_val, max_val)))
+  econ_shared_limit <- c(-max_abs * 1.3, max_abs * 1.3)
+}
+
+# Helper for consistent plotting
+make_econ_plot <- function(df, title, subtitle, y_limits) {
+  ggplot(df, aes(x = Scenario, y = Value, fill = Scenario)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = scales::label_number(accuracy = 0.1)(Value)),
+              vjust = ifelse(df$Value >= 0, -0.5, 1.2), size = 4) + # labels above/below bars
+    scale_y_continuous(
+      labels = scales::comma_format(accuracy = 1),
+      expand = expansion(mult = c(0, 0.08)),
+      limits = y_limits
+    ) +
+    my_fill_scale +
+    labs(title = title, subtitle = subtitle,
+         x = "Vaccination strategy", y = NULL) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title    = element_text(size = 14, face = "bold", hjust = 0, margin = margin(b = 6)),
+      plot.subtitle = element_text(size = 12, hjust = 0, margin = margin(b = 10), colour = "grey30"),
+      axis.title.x  = element_text(size = 11, color = "grey30", margin = margin(t = 10)),
+      axis.text.x   = element_text(size = 10),
+      axis.text.y   = element_text(size = 9),
+      legend.position = "none"
+    )
+}
+
+# Build plots
+p4 <- make_econ_plot(df_vacc_cost,   "Cost of vaccination", "Procurement + delivery", econ_shared_limit)
+p5 <- make_econ_plot(df_costs_saved, "Treatment costs saved", "Cancer treatments avoided", econ_shared_limit)
+p6 <- make_econ_plot(df_net_cost,    "Incremental cost", "Vaccination cost - treatment cost saved", econ_shared_limit)
+
+# Arrange side by side
+grid.arrange(p4, p5, p6, ncol = 3)
+
+```
+
+### \textcolor{darkTeal}{Cost-effectiveness of HPV vaccination (`r format(Sys.Date(), "%Y")`)}
+
+```{r ce_scatter, fig.width=12, fig.height=3.3}
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# ---- Pick x variable based on user's selection (keeps rest of code identical) ----
+sel_eff <- params$eff_indicator %||% "Cervical cancer cases prevented"
+
+if (identical(sel_eff, "Cervical cancer deaths prevented")) {
+  cases_df <- params$df_deaths[, c("Scenario","Value")]
+  x_label  <- "Cervical cancer deaths prevented"
+} else if (identical(sel_eff, "Cervical cancer DALYs prevented")) {
+  cases_df <- params$df_dalys[, c("Scenario","Value")]
+  x_label  <- "Cervical cancer DALYs prevented"
+} else {
+  cases_df <- params$df_cases[, c("Scenario","Value")]
+  x_label  <- "Cervical cancer cases prevented"
+}
+
+# IMPORTANT: keep column name "Cases" so the rest of your code stays the same
+names(cases_df)[2] <- "Cases"
+
+# ---- Build CE dataframe (selected x vs. net cost in millions) ----
+net_df <- params$df_net_cost[, c("Scenario","Value")]
+names(net_df)[2] <- "NetCost"
+
+ce_df <- merge(cases_df, net_df, by = "Scenario", all = TRUE)
+ce_df$NetCost <- ce_df$NetCost / 1e6
+
+# Ensure expected scenarios exist
+expected <- c("No vaccination","One-dose","Two-dose")
+missing  <- setdiff(expected, ce_df$Scenario)
+if (length(missing)) {
+  ce_df <- rbind(ce_df,
+                 data.frame(Scenario = missing,
+                            Cases = NA_real_, NetCost = NA_real_))
+}
+
+# Apply comparison filter (uses your helper defined earlier in Rmd)
+df <- filter_by_comparison(ce_df, params$comparison)
+
+# Incremental "One-dose vs. Two-dose"
+if (identical(params$comparison, "One-dose vs. Two-dose")) {
+  one_cases <- df$Cases[df$Scenario == "One-dose"]
+  two_cases <- df$Cases[df$Scenario == "Two-dose"]
+  one_cost  <- df$NetCost[df$Scenario == "One-dose"]
+  two_cost  <- df$NetCost[df$Scenario == "Two-dose"]
+
+  if (length(one_cases)==1 && length(two_cases)==1) {
+    df <- data.frame(
+      Scenario = c("One-dose","Two-dose"),
+      Cases    = c(0, two_cases - one_cases),
+      NetCost  = c(0, two_cost  - one_cost)
+    )
+  }
+}
+
+x_max <- if (identical(params$comparison, "One-dose vs. Two-dose")) 1000 else NA
+
+# ---- Thresholds from user selection ----
+gdp_cap_millions <- suppressWarnings(as.numeric(params$gdp_cap)) / 1e6
+sel <- params$ce_thresholds
+if (is.null(sel)) sel <- character(0)
+
+parse_mult <- function(lbl) suppressWarnings(as.numeric(sub("^\\s*([0-9.]+)x.*$", "\\1", lbl)))
+
+thr_labels <- character(0)
+thr_vals   <- numeric(0)
+
+# GDP-based
+is_gdp_lbl <- grepl("GDP per capita", sel, fixed = TRUE)
+if (any(is_gdp_lbl) && is.finite(gdp_cap_millions)) {
+  mults <- vapply(sel[is_gdp_lbl], parse_mult, numeric(1))
+  keep  <- is.finite(mults)
+  if (any(keep)) {
+    thr_labels <- c(thr_labels, sel[is_gdp_lbl][keep])
+    thr_vals   <- c(thr_vals, mults[keep] * gdp_cap_millions)
+  }
+}
+
+# User threshold
+if (any(sel == "User's threshold") &&
+    isTRUE(!is.null(params$ce_user_thr)) &&
+    is.finite(suppressWarnings(as.numeric(params$ce_user_thr)))) {
+  thr_labels <- c(thr_labels, "User's threshold")
+  thr_vals   <- c(thr_vals, as.numeric(params$ce_user_thr) / 1e6)
+}
+
+thr_df <- if (length(thr_labels)==length(thr_vals) && length(thr_labels)>0) {
+  data.frame(Threshold=thr_labels, slope=thr_vals, intercept=0, row.names=NULL)
+} else {
+  data.frame(Threshold=character(0), slope=numeric(0), intercept=numeric(0))
+}
+
+# ---- Colors ----
+scenario_cols <- c("No vaccination"="#999999","One-dose"="#74C0E3","Two-dose"="#0094D3")
+threshold_cols <- c("0.25x GDP per capita"="#00A44F",
+                    "0.5x GDP per capita"="orange",
+                    "1x GDP per capita"="red",
+                    "User's threshold"="#F05937")
+
+# ---- Plot (except x label uses selected text) ----
+p <- ggplot(df, aes(x=Cases, y=NetCost)) +
+  geom_line(aes(group=1), linetype="dashed", color="grey50") +
+  geom_hline(yintercept=0, color="black", linewidth=0.4) +
+  geom_vline(xintercept=0, color="black", linewidth=0.4) +
+  geom_point(aes(color=Scenario), size=4, show.legend=TRUE, na.rm=TRUE) +
+  scale_color_manual(name=NULL,
+                     values=scenario_cols,
+                     breaks=intersect(names(scenario_cols), df$Scenario),
+                     guide=guide_legend(order=1,
+                       override.aes=list(linetype="blank", shape=16, size=4))) +
+  scale_y_continuous(labels=scales::comma_format(accuracy=1),
+                     name="Net cost (Million USD, discounted)") +
+  scale_x_continuous(labels=scales::comma,
+                     name=x_label) +
+  theme_minimal(base_size=13) +
+  theme(
+    panel.grid.major = element_line(color="grey80", linewidth=0.3),
+    panel.grid.minor = element_line(color="grey80", linewidth=0.2),
+    legend.position  = "bottom",
+    legend.title     = element_text(size=11, color="grey30"),
+    legend.text      = element_text(size=11, color="grey30"),
+    axis.title.x     = element_text(size=11, color="grey30", margin=margin(t=10)),
+    axis.title.y     = element_text(size=10, color="grey30", margin=margin(r=10)),
+    axis.text.x      = element_text(size=9),
+    axis.text.y      = element_text(size=9)
+  )
+
+# Threshold lines + legend
+if (nrow(thr_df) > 0) {
+  vals_for_labels <- setNames(
+    ifelse(thr_df$Threshold %in% names(threshold_cols),
+           threshold_cols[thr_df$Threshold], "#555555"),
+    thr_df$Threshold
+  )
+  p <- p +
+    ggnewscale::new_scale_color() +
+    geom_abline(data=thr_df,
+                aes(slope=slope, intercept=intercept, color=Threshold),
+                linewidth=1, show.legend=TRUE) +
+    scale_color_manual(name=NULL,
+                       values=vals_for_labels,
+                       breaks=thr_df$Threshold,
+                       guide=guide_legend(order=2,
+                         override.aes=list(shape=NA, linetype=1, size=1.5))) +
+    ggnewscale::new_scale_color() +
+    geom_point(aes(color=Scenario), size=4, show.legend=FALSE, na.rm=TRUE) +
+    scale_color_manual(values=scenario_cols, guide="none")
+}
+
+if (is.finite(x_max)) p <- p + coord_cartesian(xlim=c(0, x_max))
+
+p
+```
+
+
+\begin{minipage}[t]{0.7\textwidth}
+\raggedright
+\textcolor{ceruleanBlue}{\fontsize{12pt}{12pt}\selectfont \textbf{HPV vaccination impact results by PRIME}} \\[0.3em]
+\textcolor{darkTeal}{\fontsize{10pt}{10pt}\selectfont \textbf{`r params$country`}} \\[0.3em]
+\textcolor{darkTeal}{\fontsize{10pt}{10pt}\selectfont `r params$comparison`}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.25\textwidth}
+\raggedleft
+\raisebox{-0.6\height}{\includegraphics[height=1.2cm]{`r params$logo`}}
+\end{minipage}
+
+\rule{\textwidth}{0.4pt}
+
+### \textcolor{darkTeal}{Parameters used in the model}
+
+```{r params_table, results='asis'}
+
+kable(params$params_table, booktabs = TRUE, align = c("l","l","c"),
+      col.names = c("Section", "Parameter", "Value")) %>%
+  kable_styling(full_width = FALSE, position = "left", font_size = 9) %>%
+  row_spec(0, bold = TRUE) %>%
+  collapse_rows(columns = 1, valign = "top")
+
+```
+
+
